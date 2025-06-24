@@ -9,32 +9,40 @@ namespace backend.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class BookingController : ControllerBase {
+public class BookingController : ControllerBase
+{
   private readonly IBookingRepository _bookingRepository;
+  private readonly IRoomRepository _roomRepository;
   private readonly IConfiguration _config;
 
-  public BookingController(IBookingRepository bookingRepository, IConfiguration config) {
+  public BookingController(IBookingRepository bookingRepository, IRoomRepository roomRepository, IConfiguration config)
+  {
     _bookingRepository = bookingRepository;
+    _roomRepository = roomRepository;
     _config = config;
   }
 
   [HttpPost]
-  public async Task<IActionResult> CreateBooking([FromBody] BookingRequest request) {
-    if(request == null || request.RoomIds == null || request.RoomIds.Count == 0)
+  public async Task<IActionResult> CreateBooking([FromBody] BookingRequest request)
+  {
+    if (request == null || request.RoomIds == null || request.RoomIds.Count == 0)
       return BadRequest("No rooms selected.");
 
     var failedRooms = new List<int>();
     var successfulBookings = new List<Booking>();
     var reservationNumber = DateTime.UtcNow.Ticks.ToString().Substring(8); // Short unique number
 
-    foreach(var roomId in request.RoomIds) {
+    foreach (var roomId in request.RoomIds)
+    {
       // Check if room is available
       var existing = await _bookingRepository.GetBookingsForRoomAsync(roomId, request.CheckIn, request.CheckOut);
-      if(existing.Any()) {
+      if (existing.Any())
+      {
         failedRooms.Add(roomId);
         continue;
       }
-      var booking = new Booking {
+      var booking = new Booking
+      {
         RoomId = roomId,
         GuestFirstName = request.GuestFirstName,
         GuestLastName = request.GuestLastName,
@@ -63,12 +71,14 @@ public class BookingController : ControllerBase {
       successfulBookings.Add(booking);
     }
 
-    if(successfulBookings.Count > 0)
+    if (successfulBookings.Count > 0)
       await _bookingRepository.AddBookingsAsync(successfulBookings);
 
     // If any rooms failed, do not send email, return error response
-    if(failedRooms.Count > 0) {
-      return Ok(new {
+    if (failedRooms.Count > 0)
+    {
+      return Ok(new
+      {
         ReservationNumber = reservationNumber,
         Message = $"Some rooms could not be booked: {string.Join(", ", failedRooms)}.",
         SuccessfulRooms = successfulBookings.Select(b => b.RoomId).ToList(),
@@ -77,7 +87,8 @@ public class BookingController : ControllerBase {
     }
 
     // Send summary email only if all rooms booked
-    try {
+    try
+    {
       var smtpHost = _config["Smtp:Host"];
       var smtpPort = int.Parse(_config["Smtp:Port"] ?? "587");
       var smtpUser = _config["Smtp:User"];
@@ -85,19 +96,61 @@ public class BookingController : ControllerBase {
       var fromEmail = _config["Smtp:From"] ?? smtpUser;
       var toEmail = string.IsNullOrWhiteSpace(request.Email) ? smtpUser : request.Email;
       var fromAddr = string.IsNullOrWhiteSpace(fromEmail) ? smtpUser : fromEmail;
-      var mail = new MailMessage(fromAddr, toEmail) {
-        Subject = $"Your Hotel Booking Confirmation #{reservationNumber}",
-        Body = $"Dear {request.GuestFirstName},\n\nYour booking is confirmed! Reservation #: {reservationNumber}\nCheck-in: {request.CheckIn:yyyy-MM-dd}\nCheck-out: {request.CheckOut:yyyy-MM-dd}\n" +
-               string.Join("\n", successfulBookings.Select(b => $"Room: {b.RoomId}")) +
-               $"\nTotal: {request.TotalCharge:C}\n\nThank you for booking with us!"
+
+      // Ensure we have valid email addresses
+      if (string.IsNullOrWhiteSpace(fromAddr) || string.IsNullOrWhiteSpace(toEmail))
+      {
+        return Ok(new
+        {
+          ReservationNumber = reservationNumber,
+          Message = "Booking confirmed, but email configuration is invalid.",
+          SuccessfulRooms = successfulBookings.Select(b => b.RoomId).ToList(),
+          FailedRooms = failedRooms
+        });
+      }
+
+      // Fetch room titles for summary
+      var roomTitles = new List<string>();
+      int idx = 1;
+      foreach (var booking in successfulBookings)
+      {
+        var room = await _roomRepository.GetRoomByIdAsync(booking.RoomId);
+        var title = room?.Title ?? "Room";
+        // Extract type after last ' - ' if present
+        var type = title.Contains(" - ") ? title.Substring(title.LastIndexOf(" - ") + 3) : title;
+        roomTitles.Add($"Room {idx} Category: {type}");
+        idx++;
+      }
+      var nights = Math.Max(1, (request.CheckOut - request.CheckIn).Days);
+      var totalRooms = successfulBookings.Count;
+      var totalCharge = request.TotalCharge;
+      var avgNightlyRate = (totalRooms > 0 && nights > 0) ? (totalCharge / (totalRooms * nights)) : 0;
+
+      var emailBody = $@"YOUR BOOKING SUMMARY
+Check-in: {request.CheckIn:yyyy-MM-dd}
+Check-out: {request.CheckOut:yyyy-MM-dd}
+{string.Join("\r\n", roomTitles)}
+Total number of adults: {request.Adults}
+Avg. nightly rate: €{avgNightlyRate:F2}
+Total charge of the stay: €{totalCharge:F2}
+This is the amount that will be charged to your credit card.".Replace("\n", "\r\n");
+
+      var mail = new MailMessage(fromAddr, toEmail)
+      {
+        Subject = $"Hotel Booking Confirmation #{reservationNumber}",
+        Body = emailBody
       };
-      using var smtp = new SmtpClient(smtpHost, smtpPort) {
+      using var smtp = new SmtpClient(smtpHost, smtpPort)
+      {
         Credentials = new NetworkCredential(smtpUser, smtpPass),
         EnableSsl = true
       };
       await smtp.SendMailAsync(mail);
-    } catch(Exception ex) {
-      return Ok(new {
+    }
+    catch (Exception ex)
+    {
+      return Ok(new
+      {
         ReservationNumber = reservationNumber,
         Message = $"Booking confirmed, but failed to send email: {ex.Message}",
         SuccessfulRooms = successfulBookings.Select(b => b.RoomId).ToList(),
@@ -105,7 +158,8 @@ public class BookingController : ControllerBase {
       });
     }
 
-    return Ok(new {
+    return Ok(new
+    {
       ReservationNumber = reservationNumber,
       Message = "Booking confirmed! Confirmation email sent.",
       SuccessfulRooms = successfulBookings.Select(b => b.RoomId).ToList(),
@@ -114,7 +168,8 @@ public class BookingController : ControllerBase {
   }
 
   [HttpGet]
-  public async Task<ActionResult<List<Booking>>> GetBookings() {
+  public async Task<ActionResult<List<Booking>>> GetBookings()
+  {
     // Return all bookings from DB
     var all = await _bookingRepository.GetBookingsByDateAsync(DateTime.UtcNow);
     return Ok(all);
