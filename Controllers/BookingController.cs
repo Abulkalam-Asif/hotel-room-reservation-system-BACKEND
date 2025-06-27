@@ -166,12 +166,4 @@ This is the amount that will be charged to your credit card.".Replace("\n", "\r\
       FailedRooms = failedRooms
     });
   }
-
-  [HttpGet]
-  public async Task<ActionResult<List<Booking>>> GetBookings()
-  {
-    // Return all bookings from DB
-    var all = await _bookingRepository.GetBookingsByDateAsync(DateTime.UtcNow);
-    return Ok(all);
-  }
 }

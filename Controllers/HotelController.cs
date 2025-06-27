@@ -23,22 +23,4 @@ public class HotelController : ControllerBase
     if (hotel == null) return NotFound();
     return Ok(hotel);
   }
-
-  [HttpGet("rooms")]
-  public async Task<ActionResult<List<Room>>> GetRooms()
-  {
-    var hotel = await _hotelRepository.GetHotelAsync();
-    if (hotel == null) return NotFound();
-    return Ok(hotel.Rooms);
-  }
-
-  [HttpGet("room/{id}")]
-  public async Task<ActionResult<Room?>> GetRoom(int id)
-  {
-    var hotel = await _hotelRepository.GetHotelAsync();
-    if (hotel == null) return NotFound();
-    var room = hotel.Rooms?.FirstOrDefault(r => r.Id == id);
-    if (room == null) return NotFound();
-    return Ok(room);
-  }
 }
